@@ -1,6 +1,7 @@
 package com.github.springboot.jedis.lock;
 
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 import org.springframework.data.redis.core.RedisTemplate;
 
@@ -134,7 +135,6 @@ public class JedisLock {
 		this.acquiryTimeoutInMillis = acquireTimeoutMillis;
 		this.lockExpiryInMillis = expiryTimeMillis + 1;
 		this.lockUUID = uuid;
-		;
 	}
 
 	/**
@@ -158,8 +158,12 @@ public class JedisLock {
 	 * @throws InterruptedException
 	 *             in case of thread interruption
 	 */
-	public synchronized boolean acquire() throws InterruptedException {
+	public boolean acquire() throws InterruptedException {
 		return acquire(redisTemplate);
+	}
+
+	private String getNofityKey(String lockKeyPath) {
+		return lockKeyPath + ":notify";
 	}
 
 	/**
@@ -171,7 +175,7 @@ public class JedisLock {
 	 * @throws InterruptedException
 	 *             in case of thread interruption
 	 */
-	protected synchronized boolean acquire(RedisTemplate<String, String> redisTemplate) throws InterruptedException {
+	protected boolean acquire(RedisTemplate<String, String> redisTemplate) throws InterruptedException {
 		int timeout = acquiryTimeoutInMillis;
 		while (timeout >= 0) {
 
@@ -192,7 +196,7 @@ public class JedisLock {
 			}
 
 			timeout -= DEFAULT_ACQUIRY_RESOLUTION_MILLIS;
-			Thread.sleep(DEFAULT_ACQUIRY_RESOLUTION_MILLIS);
+			redisTemplate.opsForList().leftPop(getNofityKey(lockKeyPath), DEFAULT_ACQUIRY_RESOLUTION_MILLIS, TimeUnit.MILLISECONDS);
 		}
 
 		return false;
@@ -217,7 +221,7 @@ public class JedisLock {
 	/**
 	 * Acquired lock release.
 	 */
-	public synchronized void release() {
+	public void release() {
 		release(redisTemplate);
 	}
 
@@ -228,9 +232,10 @@ public class JedisLock {
 	 *            redisTemplate
 	 * 
 	 */
-	protected synchronized void release(RedisTemplate<String, String> redisTemplate) {
+	protected void release(RedisTemplate<String, String> redisTemplate) {
 		if (isLocked()) {
 			redisTemplate.delete(lockKeyPath);
+			redisTemplate.opsForList().leftPush(getNofityKey(lockKeyPath), "nofity");// 通知其它等待的线程(进程)
 			this.lock = null;
 		}
 	}
@@ -240,7 +245,7 @@ public class JedisLock {
 	 * 
 	 * @return true if lock owned
 	 */
-	public synchronized boolean isLocked() {
+	public boolean isLocked() {
 		return this.lock != null;
 	}
 
@@ -249,7 +254,7 @@ public class JedisLock {
 	 * 
 	 * @return the expiry time in millis (or null if not locked)
 	 */
-	public synchronized long getLockExpiryTimeInMillis() {
+	public long getLockExpiryTimeInMillis() {
 		return this.lock.getExpiryTime();
 	}
 
